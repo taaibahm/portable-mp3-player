@@ -13,6 +13,7 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "button.h"
+#include "oled.h"
 
 #define TAG "SD_TEST"
 
@@ -21,10 +22,55 @@
 #define PIN_NUM_CLK  18
 #define PIN_NUM_CS   5
 
-#define PIN_NUM_BUTTON 4
+#define PIN_NUM_OLED_BUTTON 25
+#define PIN_NUM_BUTTON      13
+#define PIN_NUM_OLED_SDA    33
+#define PIN_NUM_OLED_SCL    32
+
+static bool oled_ready = false;
+
+static void show_oled_idle(void) {
+    char line[22];
+    snprintf(line, sizeof(line), "on GPIO %d", PIN_NUM_OLED_BUTTON);
+
+    oled_clear();
+    oled_draw_string(0, 0, "OLED test");
+    oled_draw_string(0, 2, "Press the button");
+    oled_draw_string(0, 3, line);
+    oled_flush();
+}
+
+// Runs on the button task each time the OLED button changes state
+static void on_oled_button(int gpio, bool pressed) {
+    static uint32_t presses = 0;
+
+    if (!oled_ready) {
+        return;
+    }
+    if (!pressed) {
+        show_oled_idle();
+        return;
+    }
+
+    presses++;
+    char line[22];
+    snprintf(line, sizeof(line), "Presses: %lu", presses);
+
+    oled_clear();
+    oled_draw_string(0, 0, "Button pressed!");
+    oled_draw_string(0, 2, "Hello from ESP32");
+    oled_draw_string(0, 4, line);
+    oled_flush();
+}
 
 void app_main(void) {
+    oled_ready = oled_init(PIN_NUM_OLED_SDA, PIN_NUM_OLED_SCL) == ESP_OK;
+    if (oled_ready) {
+        show_oled_idle();
+    }
+
     // Buttons run in their own task, so they keep working after the SD test below finishes
+    button_add(PIN_NUM_OLED_BUTTON, on_oled_button);
     button_add(PIN_NUM_BUTTON, NULL);
 
     ESP_LOGI(TAG, "Waiting for SD card power stabilization...");

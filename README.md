@@ -4,7 +4,7 @@ A portable MP3 player built on the ESP32 using ESP-IDF. Music files are stored o
 
 ## Current status
 
-The project is in its early stages. The firmware currently runs two hardware tests at the same time, and both print to the ESP-IDF serial monitor.
+The project is in its early stages. The firmware currently runs three hardware tests at the same time, and all of them print to the ESP-IDF serial monitor. The tests don't depend on each other: the buttons and screen work without an SD card, and the SD test works without the screen.
 
 ### SD card test
 
@@ -18,13 +18,21 @@ The SD card bring-up test is in [main/main.c](main/main.c). It:
 
 ### Button test
 
-The button input test is in [main/button.c](main/button.c). `app_main` starts it before the SD test. It:
+The button input code is in [main/button.c](main/button.c). `app_main` registers two buttons, on GPIO 25 and GPIO 13, before the SD test starts. For each button, the code:
 
-1. Configures GPIO 4 as an input with the internal pull-up enabled
+1. Configures the pin as an input with the internal pull-up enabled
 2. Fires an interrupt whenever the pin changes, in either direction
 3. Waits 30 ms for the switch to stop bouncing, then logs **Button pressed** with a running count, or **Button released** with how long the button was held
 
-The button test runs in its own FreeRTOS task, so it keeps running after the SD test finishes, even if the SD card fails to mount.
+The buttons are handled in their own FreeRTOS task, so they keep working after the SD test finishes, even if the SD card fails to mount.
+
+### OLED display test
+
+The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED (SSD1306) and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
+
+At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. When you let go, it goes back to the start message.
+
+The GPIO 13 button is optional. It only logs to the serial monitor.
 
 MP3 decoding and audio output are not implemented yet.
 
@@ -33,39 +41,102 @@ MP3 decoding and audio output are not implemented yet.
 - ESP32 dev board (classic ESP32 target, 2 MB flash or more)
 - SPI microSD card reader module
 - microSD card formatted as FAT32
-- Momentary push button
+- 1.3" 128x64 I2C OLED module, 4 pins (SSD1306 or SH1106)
+- 1 or 2 momentary push buttons
+- Breadboard and jumper wires
+
+### Pin overview
+
+| ESP32 pin | Header (DevKit) | Connects to                         |
+|-----------|-----------------|-------------------------------------|
+| GPIO 5    | Right           | SD card CS                          |
+| GPIO 18   | Right           | SD card SCK                         |
+| GPIO 19   | Right           | SD card MISO                        |
+| GPIO 23   | Right           | SD card MOSI                        |
+| GPIO 32   | Left            | OLED SCL                            |
+| GPIO 33   | Left            | OLED SDA                            |
+| GPIO 25   | Left            | Button 1 (OLED test)                |
+| GPIO 13   | Left            | Button 2 (log only, optional)       |
+| 3V3       | Either          | OLED VCC, SD card VCC if it's 3.3 V |
+| 5V / VIN  | Either          | SD card VCC if it's a 5 V module    |
+| GND       | Either          | GND of every module and button      |
+
+"Left" and "Right" are for a standard ESP32 DevKit held with the USB port at the bottom and the chip facing you. Check the pin labels printed on your board, because layouts vary.
+
+All GPIO numbers are defined at the top of [main/main.c](main/main.c) (`PIN_NUM_*`) if you need to change them.
+
+### Power and ground
+
+Every part has to share a ground with the ESP32, or nothing will talk to each other.
+
+1. Run a jumper from an ESP32 **GND** pin to the breadboard's **blue (−) rail**.
+2. Run a jumper from the ESP32 **3V3** pin to the breadboard's **red (+) rail**.
+3. Connect every module's GND to the − rail. One leg of each button also goes to the − rail.
+4. Connect the OLED's VCC to the + rail (3.3 V).
+5. Connect the SD module's VCC to the + rail only if it's a 3.3 V module. A 5 V module goes to the ESP32's **5V** (or **VIN**) pin instead. Never connect 5V to the + rail.
 
 ### SD card reader wiring
 
-| SD card module pin | ESP32 GPIO | Notes                                |
+| SD card module pin | ESP32 pin  | Notes                                |
 |--------------------|------------|--------------------------------------|
 | CS (SS)            | GPIO 5     | Chip select                          |
 | SCK (CLK)          | GPIO 18    | SPI clock                            |
 | MOSI (DI)          | GPIO 23    | ESP32 → card                         |
 | MISO (DO)          | GPIO 19    | Card → ESP32                         |
 | VCC                | 3V3 or 5V  | Check your module (see below)        |
-| GND                | GND        | Use a common ground with the ESP32   |
+| GND                | GND        |                                      |
 
-These are the ESP32's default VSPI pins. They are defined at the top of [main/main.c](main/main.c) (`PIN_NUM_*`) if you need to change them.
+These are the ESP32's default VSPI pins.
 
 **Power:** Many SD card modules have an onboard 3.3 V regulator and level shifter and must be fed **5 V**. Bare modules without a regulator must be fed **3.3 V**. Feeding 5 V to a module without a regulator can damage the card.
 
+### OLED display wiring
+
+| OLED pin | ESP32 pin | Notes                                    |
+|----------|-----------|------------------------------------------|
+| VCC      | 3V3       | Use 3.3 V, not 5 V (see below)           |
+| GND      | GND       |                                          |
+| SCL      | GPIO 32   | I2C clock                                |
+| SDA      | GPIO 33   | I2C data                                 |
+
+The ESP32 can route I2C to almost any GPIO, so these were picked to keep the OLED on the opposite header from the SD card.
+
+**Check the pin labels printed on your module.** Some modules have GND first and some have VCC first, and swapping them can damage the display.
+
+The module works on 3.3 V or 5 V, but its onboard pull-up resistors connect SDA and SCL to VCC. Powering it from 3V3 keeps the I2C lines at a voltage that is safe for the ESP32.
+
+The firmware checks I2C addresses `0x3C` and `0x3D` and uses whichever one answers.
+
 ### Button wiring
 
-| Button leg | ESP32 pin | Notes                                   |
-|------------|-----------|-----------------------------------------|
-| Leg 1      | GPIO 4    | Internal pull-up enabled, active low    |
-| Leg 2      | GND       |                                         |
+| Button     | Leg 1   | Leg 2 | Purpose                                         |
+|------------|---------|-------|-------------------------------------------------|
+| Button 1   | GPIO 25 | GND   | Shows text on the OLED and logs presses         |
+| Button 2   | GPIO 13 | GND   | Logs presses to the serial monitor (optional)   |
 
-No external resistor is needed. To use a different pin, change `PIN_NUM_BUTTON` at the top of [main/main.c](main/main.c). Avoid the SD card pins (5, 18, 19, 23), the strapping pins (0, 2, 12, 15), GPIO 6–11 (internal flash), and GPIO 34–39 (they're input-only and have no internal pull-up). GPIO 4, 13, 14, 25, 26, 27, 32 and 33 are all safe choices.
+No resistors are needed, because the internal pull-ups are enabled and a pressed button reads as low. Don't connect a button to 3V3.
 
-Each press and release is logged to the serial monitor:
+A four-leg tactile button has its legs joined in pairs inside. Put the button across the breadboard's center gap and use **two diagonally opposite legs**, so the button actually opens and closes the circuit.
 
-```
-I (...) BUTTON: Button ready on GPIO 4
-I (...) BUTTON: Button pressed (GPIO 4, count 1)
-I (...) BUTTON: Button released (GPIO 4, held 184 ms)
-```
+If you want to use different pins, avoid these:
+
+- 5, 13, 18, 19, 23, 25, 32 and 33, which the SD card, OLED and buttons already use
+- 0, 2, 12 and 15, which are strapping pins
+- 6–11, which are connected to the internal flash
+- 34–39, which are input-only and have no internal pull-up
+
+GPIO 4, 14, 21, 22, 26 and 27 are free and safe to use.
+
+### Wiring checklist
+
+Check these before plugging in the USB cable:
+
+- [ ] ESP32 GND → breadboard − rail, ESP32 3V3 → breadboard + rail
+- [ ] SD card: CS → 5, SCK → 18, MOSI → 23, MISO → 19, VCC → 3V3 or 5V (depending on the module), GND → − rail
+- [ ] OLED: VCC → + rail (3V3), GND → − rail, SCL → 32, SDA → 33, matched to the labels printed on the module
+- [ ] Button 1: GPIO 25 ↔ GND, using diagonal legs
+- [ ] Button 2 (optional): GPIO 13 ↔ GND, using diagonal legs
+- [ ] Nothing is connected between 5V and the + rail
 
 ## Software setup
 
@@ -96,7 +167,9 @@ Replace `<PORT>` with your board's serial port (for example `COM3` on Windows (f
 On success the serial monitor should show something like:
 
 ```
-I (...) BUTTON: Button ready on GPIO 4
+I (...) OLED: Display found at 0x3C
+I (...) BUTTON: Button ready on GPIO 25
+I (...) BUTTON: Button ready on GPIO 13
 I (...) SD_TEST: Filesystem mounted successfully!
 Name: SD16G
 Type: SDHC/SDXC
@@ -105,11 +178,11 @@ Size: 14910MB
 ...
 I (...) SD_TEST:  Found file: SONG01.MP3
 I (...) SD_TEST: Card unmounted.
-I (...) BUTTON: Button pressed (GPIO 4, count 1)
-I (...) BUTTON: Button released (GPIO 4, held 184 ms)
+I (...) BUTTON: Button pressed (GPIO 25, count 1)
+I (...) BUTTON: Button released (GPIO 25, held 184 ms)
 ```
 
-The button lines show up whenever you press the button.
+The button lines show up whenever you press a button.
 
 ## Troubleshooting
 
@@ -118,9 +191,13 @@ The button lines show up whenever you press the button.
 | `ESP_ERR_TIMEOUT` (0x107) or card not detected | Check the wiring and power, make sure the card is fully inserted, and try a different card. |
 | `ESP_ERR_INVALID_CRC` (0x109) | The SPI clock is too fast for your wiring. Lower `host.max_freq_khz` in [main/main.c](main/main.c) from `4000` to `1000` or `400`. Keep the jumper wires short. |
 | `ESP_FAIL` while mounting | The card is probably not FAT formatted. Reformat it as FAT32. |
-| Button press not logged | Check that the button connects GPIO 4 to **GND** (not 3V3) when pressed. Four-leg tactile buttons are internally joined in pairs, so use two legs on opposite corners. |
-| One press logs several presses | The switch is bouncing for longer than 30 ms. Increase `DEBOUNCE_MS` in [main/button.c](main/button.c). |
 | Random or unstable SD failures | Add external 10 kΩ pull-up resistors on MISO, MOSI and CS, and a 10–100 µF capacitor across the module's VCC and GND. |
+| `No display found at 0x3C or 0x3D` | Check VCC and GND first, then check SDA and SCL. They're easy to swap, so try exchanging GPIO 32 and GPIO 33. |
+| OLED image is shifted, or there's a strip of noise on one edge | Many 1.3" modules actually use an SH1106 chip instead of an SSD1306. Set `OLED_COL_OFFSET` to `2` in [main/oled.c](main/oled.c). |
+| Text is upside down or mirrored | Change `0xA1` to `0xA0` and `0xC8` to `0xC0` in `init_cmds` in [main/oled.c](main/oled.c). |
+| Button press not logged | Check that the button connects its GPIO to **GND** (not 3V3) when pressed. Four-leg tactile buttons are internally joined in pairs, so use two legs on opposite corners. |
+| Press is logged but the screen doesn't change | Only the button on `PIN_NUM_OLED_BUTTON` (GPIO 25) updates the screen. Check which GPIO the log line shows. |
+| One press logs several presses | The switch is bouncing for longer than 30 ms. Increase `DEBOUNCE_MS` in [main/button.c](main/button.c). |
 
 ## Project structure
 
@@ -130,8 +207,10 @@ The button lines show up whenever you press the button.
 ├── sdkconfig.defaults    # Default config overrides (SDIO support disabled)
 ├── sdkconfig             # Generated project configuration
 └── main/
-    ├── CMakeLists.txt    # Component registration (requires fatfs, sdmmc, esp_driver_spi, esp_driver_gpio)
-    ├── main.c            # Application entry point, pin definitions, SD card test
+    ├── CMakeLists.txt    # Component registration
+    ├── main.c            # Application entry point, pin definitions, SD card and OLED tests
     ├── button.c          # Button input (interrupt + debounce, logs presses, optional callback)
-    └── button.h          # button_add() and the callback type
+    ├── button.h          # button_add() and the callback type
+    ├── oled.c            # SSD1306/SH1106 I2C OLED driver with a 5x7 text font
+    └── oled.h            # OLED init, clear, draw text and flush functions
 ```
