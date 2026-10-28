@@ -12,6 +12,7 @@
 #include "driver/sdspi_host.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "button.h"
 
 #define TAG "SD_TEST"
 
@@ -21,6 +22,9 @@
 #define PIN_NUM_CS   5
 
 void app_main(void) {
+    // Runs in its own task, so it keeps working after the SD test below finishes
+    button_init();
+
     ESP_LOGI(TAG, "Waiting for SD card power stabilization...");
     vTaskDelay(pdMS_TO_TICKS(250));
 
