@@ -28,7 +28,7 @@ The buttons are handled in their own FreeRTOS task, so they keep working after t
 
 ### OLED display test
 
-The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED (SSD1306) and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
+The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
 
 At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. When you let go, it goes back to the start message.
 
@@ -41,7 +41,7 @@ MP3 decoding and audio output are not implemented yet.
 - ESP32 dev board (classic ESP32 target, 2 MB flash or more)
 - SPI microSD card reader module
 - microSD card formatted as FAT32
-- 1.3" 128x64 I2C OLED module, 4 pins (SSD1306 or SH1106)
+- 1.3" 128x64 I2C OLED module, 4 pins. Ours is sold as SSD1306 but is actually an SH1106, which the driver is set up for by default
 - 1 or 2 momentary push buttons
 - Breadboard and jumper wires
 
@@ -193,7 +193,7 @@ The button lines show up whenever you press a button.
 | `ESP_FAIL` while mounting | The card is probably not FAT formatted. Reformat it as FAT32. |
 | Random or unstable SD failures | Add external 10 kΩ pull-up resistors on MISO, MOSI and CS, and a 10–100 µF capacitor across the module's VCC and GND. |
 | `No display found at 0x3C or 0x3D` | Check VCC and GND first, then check SDA and SCL. They're easy to swap, so try exchanging GPIO 32 and GPIO 33. |
-| OLED image is shifted, or there's a strip of noise on one edge | Many 1.3" modules actually use an SH1106 chip instead of an SSD1306. Set `OLED_COL_OFFSET` to `2` in [main/oled.c](main/oled.c). |
+| Left edge of the text is cut off, and there's a strip of noise on the right | The driver's column offset doesn't match your display's chip. The default `OLED_COL_OFFSET` of `2` in [main/oled.c](main/oled.c) is for SH1106 displays (most 1.3" modules). For a true SSD1306 (most 0.96" modules), set it to `0`. |
 | Text is upside down or mirrored | Change `0xA1` to `0xA0` and `0xC8` to `0xC0` in `init_cmds` in [main/oled.c](main/oled.c). |
 | Button press not logged | Check that the button connects its GPIO to **GND** (not 3V3) when pressed. Four-leg tactile buttons are internally joined in pairs, so use two legs on opposite corners. |
 | Press is logged but the screen doesn't change | Only the button on `PIN_NUM_OLED_BUTTON` (GPIO 25) updates the screen. Check which GPIO the log line shows. |

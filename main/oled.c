@@ -9,9 +9,11 @@
 #define OLED_HEIGHT 64
 #define OLED_PAGES  (OLED_HEIGHT / 8)
 
-// 0 for SSD1306. Many 1.3" modules are actually SH1106 (132 columns wide):
-// if the image is shifted or there's a strip of noise on one edge, set this to 2
-#define OLED_COL_OFFSET 0
+// 0 for SSD1306, 2 for SH1106. Many 1.3" modules sold as SSD1306 (including
+// ours) are actually SH1106, which has 132 columns of RAM with the visible 128
+// in the middle. The wrong value cuts off the left edge and leaves a strip of
+// noise on the right.
+#define OLED_COL_OFFSET 2
 
 #define OLED_I2C_FREQ_HZ 400000
 #define OLED_TIMEOUT_MS  100
