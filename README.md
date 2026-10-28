@@ -57,14 +57,14 @@ These are the ESP32's default VSPI pins. They are defined at the top of [main/ma
 | Leg 1      | GPIO 4    | Internal pull-up enabled, active low    |
 | Leg 2      | GND       |                                         |
 
-No external resistor is needed. To use a different pin, change `PIN_NUM_BUTTON` in [main/button.h](main/button.h). Avoid the SD card pins (5, 18, 19, 23), the strapping pins (0, 2, 12, 15), GPIO 6–11 (internal flash), and GPIO 34–39 (they're input-only and have no internal pull-up). GPIO 4, 13, 14, 25, 26, 27, 32 and 33 are all safe choices.
+No external resistor is needed. To use a different pin, change `PIN_NUM_BUTTON` at the top of [main/main.c](main/main.c). Avoid the SD card pins (5, 18, 19, 23), the strapping pins (0, 2, 12, 15), GPIO 6–11 (internal flash), and GPIO 34–39 (they're input-only and have no internal pull-up). GPIO 4, 13, 14, 25, 26, 27, 32 and 33 are all safe choices.
 
 Each press and release is logged to the serial monitor:
 
 ```
 I (...) BUTTON: Button ready on GPIO 4
 I (...) BUTTON: Button pressed (GPIO 4, count 1)
-I (...) BUTTON: Button released (held 184 ms)
+I (...) BUTTON: Button released (GPIO 4, held 184 ms)
 ```
 
 ## Software setup
@@ -106,7 +106,7 @@ Size: 14910MB
 I (...) SD_TEST:  Found file: SONG01.MP3
 I (...) SD_TEST: Card unmounted.
 I (...) BUTTON: Button pressed (GPIO 4, count 1)
-I (...) BUTTON: Button released (held 184 ms)
+I (...) BUTTON: Button released (GPIO 4, held 184 ms)
 ```
 
 The button lines show up whenever you press the button.
@@ -131,7 +131,7 @@ The button lines show up whenever you press the button.
 ├── sdkconfig             # Generated project configuration
 └── main/
     ├── CMakeLists.txt    # Component registration (requires fatfs, sdmmc, esp_driver_spi, esp_driver_gpio)
-    ├── main.c            # Application entry point (SD card test)
-    ├── button.c          # Button input test (interrupt + debounce, logs presses)
-    └── button.h          # Button pin definition and init function
+    ├── main.c            # Application entry point, pin definitions, SD card test
+    ├── button.c          # Button input (interrupt + debounce, logs presses, optional callback)
+    └── button.h          # button_add() and the callback type
 ```

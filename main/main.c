@@ -21,9 +21,11 @@
 #define PIN_NUM_CLK  18
 #define PIN_NUM_CS   5
 
+#define PIN_NUM_BUTTON 4
+
 void app_main(void) {
-    // Runs in its own task, so it keeps working after the SD test below finishes
-    button_init();
+    // Buttons run in their own task, so they keep working after the SD test below finishes
+    button_add(PIN_NUM_BUTTON, NULL);
 
     ESP_LOGI(TAG, "Waiting for SD card power stabilization...");
     vTaskDelay(pdMS_TO_TICKS(250));
