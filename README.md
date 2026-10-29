@@ -8,13 +8,14 @@ The project is in its early stages. The firmware currently runs three hardware t
 
 ### SD card test
 
-The SD card bring-up test is in [main/main.c](main/main.c). It:
+The SD card code is in [main/sd_card.c](main/sd_card.c). At startup it:
 
 1. Waits 250 ms for the SD card's power to settle
 2. Initializes the SPI bus (`SPI2_HOST`, also known as HSPI) and enables the internal pull-ups on MISO, MOSI and CS
-3. Mounts the card's FAT filesystem at `/sdcard`
-4. Prints the card info (name, type, speed, size) and lists the files in the root directory
-5. Unmounts the card and frees the SPI bus
+3. Mounts the card's FAT filesystem at `/sdcard` and prints the card info (name, type, speed, size)
+4. Lists the files and folders in the root directory, folders first and sorted by name, skipping hidden and system entries
+
+The card stays mounted so the rest of the firmware can read from it.
 
 ### Button test
 
@@ -48,10 +49,10 @@ MP3 decoding and audio output are not implemented yet.
 
 | ESP32 pin | Header (DevKit) | Connects to                         |
 |-----------|-----------------|-------------------------------------|
-| GPIO 5    | Right           | SD card CS                          |
-| GPIO 18   | Right           | SD card SCK                         |
-| GPIO 19   | Right           | SD card MISO                        |
-| GPIO 23   | Right           | SD card MOSI                        |
+| GPIO 18   | Right           | SD card MISO                        |
+| GPIO 19   | Right           | SD card MOSI                        |
+| GPIO 21   | Right           | SD card SCK                         |
+| GPIO 23   | Right           | SD card CS                          |
 | GPIO 32   | Left            | OLED SCL                            |
 | GPIO 33   | Left            | OLED SDA                            |
 | GPIO 25   | Left            | Button                              |
@@ -77,14 +78,14 @@ Every part has to share a ground with the ESP32, or nothing will talk to each ot
 
 | SD card module pin | ESP32 pin  | Notes                                |
 |--------------------|------------|--------------------------------------|
-| CS (SS)            | GPIO 5     | Chip select                          |
-| SCK (CLK)          | GPIO 18    | SPI clock                            |
-| MOSI (DI)          | GPIO 23    | ESP32 → card                         |
-| MISO (DO)          | GPIO 19    | Card → ESP32                         |
+| CS (SS)            | GPIO 23    | Chip select                          |
+| SCK (CLK)          | GPIO 21    | SPI clock                            |
+| MOSI (DI)          | GPIO 19    | ESP32 → card                         |
+| MISO (DO)          | GPIO 18    | Card → ESP32                         |
 | VCC                | 3V3 or 5V  | Check your module (see below)        |
 | GND                | GND        |                                      |
 
-These are the ESP32's default VSPI pins.
+These aren't the ESP32's default SPI pins, but the ESP32 can route SPI to almost any GPIO, so any 4 free pins work at this clock speed.
 
 **Power:** Many SD card modules have an onboard 3.3 V regulator and level shifter and must be fed **5 V**. Bare modules without a regulator must be fed **3.3 V**. Feeding 5 V to a module without a regulator can damage the card.
 
@@ -118,19 +119,19 @@ A four-leg tactile button has its legs joined in pairs inside. Put the button ac
 
 If you want to use a different pin, avoid these:
 
-- 5, 18, 19, 23, 25, 32 and 33, which the SD card, OLED and button already use
+- 18, 19, 21, 23, 25, 32 and 33, which the SD card, OLED and button already use
 - 0, 2, 12 and 15, which are strapping pins
 - 6–11, which are connected to the internal flash
 - 34–39, which are input-only and have no internal pull-up
 
-GPIO 4, 13, 14, 21, 22, 26 and 27 are free and safe to use.
+GPIO 4, 5, 13, 14, 22, 26 and 27 are free and safe to use.
 
 ### Wiring checklist
 
 Check these before plugging in the USB cable:
 
 - [ ] ESP32 GND → breadboard − rail, ESP32 3V3 → breadboard + rail
-- [ ] SD card: CS → 5, SCK → 18, MOSI → 23, MISO → 19, VCC → 3V3 or 5V (depending on the module), GND → − rail
+- [ ] SD card: CS → 23, SCK → 21, MOSI → 19, MISO → 18, VCC → 3V3 or 5V (depending on the module), GND → − rail
 - [ ] OLED: VCC → + rail (3V3), GND → − rail, SCL → 32, SDA → 33, matched to the labels printed on the module
 - [ ] Button: GPIO 25 ↔ GND, using diagonal legs
 - [ ] Nothing is connected between 5V and the + rail
@@ -166,14 +167,15 @@ On success the serial monitor should show something like:
 ```
 I (...) OLED: Display found at 0x3C
 I (...) BUTTON: Button ready on GPIO 25
-I (...) SD_TEST: Filesystem mounted successfully!
+I (...) SD_CARD: Filesystem mounted successfully!
 Name: SD16G
 Type: SDHC/SDXC
 Speed: 4.00 MHz (limit: 4.00 MHz)
 Size: 14910MB
 ...
-I (...) SD_TEST:  Found file: SONG01.MP3
-I (...) SD_TEST: Card unmounted.
+I (...) SD_CARD:  Found folder: MUSIC
+I (...) SD_CARD:  Found file: SONG01.MP3
+I (...) MAIN: 2 item(s) on the SD card
 I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
 I (...) BUTTON: Button pressed (GPIO 25, count 2)
@@ -188,7 +190,7 @@ The button lines show up whenever you press the button.
 | Symptom | Things to try |
 |---------|---------------|
 | `ESP_ERR_TIMEOUT` (0x107) or card not detected | Check the wiring and power, make sure the card is fully inserted, and try a different card. |
-| `ESP_ERR_INVALID_CRC` (0x109) | The SPI clock is too fast for your wiring. Lower `host.max_freq_khz` in [main/main.c](main/main.c) from `4000` to `1000` or `400`. Keep the jumper wires short. |
+| `ESP_ERR_INVALID_CRC` (0x109) | The SPI clock is too fast for your wiring. Lower `host.max_freq_khz` in [main/sd_card.c](main/sd_card.c) from `4000` to `1000` or `400`. Keep the jumper wires short. |
 | `ESP_FAIL` while mounting | The card is probably not FAT formatted. Reformat it as FAT32. |
 | Random or unstable SD failures | Add external 10 kΩ pull-up resistors on MISO, MOSI and CS, and a 10–100 µF capacitor across the module's VCC and GND. |
 | `No display found at 0x3C or 0x3D` | Check VCC and GND first, then check SDA and SCL. They're easy to swap, so try exchanging GPIO 32 and GPIO 33. |
@@ -206,9 +208,11 @@ The button lines show up whenever you press the button.
 ├── sdkconfig             # Generated project configuration
 └── main/
     ├── CMakeLists.txt    # Component registration
-    ├── main.c            # Application entry point, pin definitions, SD card and OLED tests
+    ├── main.c            # Application entry point, pin definitions, OLED test
     ├── button.c          # Button input (interrupt + debounce, short and long press events)
     ├── button.h          # button_add(), event types and the long press time
     ├── oled.c            # SSD1306/SH1106 I2C OLED driver with a 5x7 text font
-    └── oled.h            # OLED init, clear, draw text and flush functions
+    ├── oled.h            # OLED init, clear, draw text and flush functions
+    ├── sd_card.c         # SD card mount over SPI and sorted directory listing
+    └── sd_card.h         # sd_card_mount(), sd_card_list() and the entry type
 ```
