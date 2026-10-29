@@ -219,6 +219,11 @@ void oled_draw_string(int x, int row, const char *text) {
 }
 
 esp_err_t oled_flush(void) {
+    // Lets callers keep drawing (to the framebuffer only) when no display was found
+    if (oled_dev == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     uint8_t data[1 + OLED_WIDTH];
     data[0] = OLED_CTRL_DATA;
 

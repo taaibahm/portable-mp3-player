@@ -4,37 +4,52 @@ A portable MP3 player built on the ESP32 using ESP-IDF. Music files are stored o
 
 ## Current status
 
-The project is in its early stages. The firmware currently runs three hardware tests at the same time, and all of them print to the ESP-IDF serial monitor. The tests don't depend on each other: the button and screen work without an SD card, and the SD test works without the screen.
+The firmware runs a connection check at startup, then shows the files on the SD card as a menu on the OLED that you control with one button. MP3 decoding and audio output are not implemented yet.
 
-### SD card test
+### Using it
 
-The SD card code is in [main/sd_card.c](main/sd_card.c). At startup it:
+1. **Startup check.** When the board powers on, the screen shows each part as it's brought up:
 
-1. Waits 250 ms for the SD card's power to settle
-2. Initializes the SPI bus (`SPI2_HOST`, also known as HSPI) and enables the internal pull-ups on MISO, MOSI and CS
-3. Mounts the card's FAT filesystem at `/sdcard` and prints the card info (name, type, speed, size)
-4. Lists the files and folders in the root directory, folders first and sorted by name, skipping hidden and system entries
+   ```
+   Startup check
 
-The card stays mounted so the rest of the firmware can read from it.
+   OLED     OK
+   Button   OK
+   SD card  OK
+   Items    5
+   ```
 
-### Button test
+   The same results are printed to the serial monitor. If the SD card fails, the screen says "Check SD wiring and card, then reset" and stops there.
 
-The button input code is in [main/button.c](main/button.c). `app_main` registers the button on GPIO 25 before the SD test starts. The code:
+2. **File list.** After 2 seconds the screen switches to the list of files and folders in the root of the SD card. Folders come first and end in `/`. The `>` marks the highlighted item, and 6 items fit on the screen at a time.
 
-1. Configures the pin as an input with the internal pull-up enabled
-2. Fires an interrupt whenever the pin changes, in either direction
-3. Waits 30 ms for the switch to stop bouncing, then logs **Button pressed** with a running count, or **Button released** with how long the button was held
-4. Reports events to a callback: `PRESSED` and `RELEASED` for every change, `SHORT_PRESS` when the button is let go before 3 seconds, and `LONG_PRESS` as soon as it has been held for 3 seconds (while still held). The 3 second threshold is `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h).
+   ```
+   SD card: 5 items
+   >MUSIC/
+    PODCASTS/
+    SONG01.MP3
+    SONG02.MP3
+    NOTES.TXT
+   Tap:next Hold:open
+   ```
 
-The button is handled in its own FreeRTOS task, so it keeps working after the SD test finishes, even if the SD card fails to mount.
+3. **Tap** the button to move the highlight down one item. It wraps back to the top after the last item, and the list scrolls when you go past the bottom of the screen.
 
-### OLED display test
+4. **Hold** the button for 3 seconds to open the highlighted item. As soon as you press, the bottom line changes to "Hold 3s to open..." so you know the hold is counting. The details screen shows the name, the size and whether it's an MP3 file or a folder.
 
-The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
+5. **Tap** again on the details screen to go back to the list.
 
-At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. After 3 seconds it switches to "Long press!". When you let go, it goes back to the start message.
+### How it fits together
 
-MP3 decoding and audio output are not implemented yet.
+| File | Job |
+|------|-----|
+| [main/main.c](main/main.c) | Pin definitions, the startup check, and passing button events to the browser |
+| [main/browser.c](main/browser.c) | The file list and details screens, and what tap and hold do on each screen |
+| [main/button.c](main/button.c) | Debounces the button and turns presses into `PRESSED`, `RELEASED`, `SHORT_PRESS` and `LONG_PRESS` events. The hold time is `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h) |
+| [main/sd_card.c](main/sd_card.c) | Mounts the card over SPI at `/sdcard` and lists a folder (folders first, sorted by name, hidden and system entries skipped). The card stays mounted |
+| [main/oled.c](main/oled.c) | Drives the 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows |
+
+The button runs in its own FreeRTOS task, so presses are handled independently of the SD card and screen setup. Button events that happen during the startup check are ignored.
 
 ## Hardware
 
@@ -175,15 +190,18 @@ Size: 14910MB
 ...
 I (...) SD_CARD:  Found folder: MUSIC
 I (...) SD_CARD:  Found file: SONG01.MP3
+I (...) MAIN: Startup check: OLED OK, button OK, SD card OK
 I (...) MAIN: 2 item(s) on the SD card
 I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
+I (...) BROWSER: Highlighted SONG01.MP3
 I (...) BUTTON: Button pressed (GPIO 25, count 2)
 I (...) BUTTON: Button long press (GPIO 25)
+I (...) BROWSER: Selected SONG01.MP3
 I (...) BUTTON: Button released (GPIO 25, held 3412 ms)
 ```
 
-The button lines show up whenever you press the button.
+The `BUTTON` and `BROWSER` lines show up as you tap and hold the button.
 
 ## Troubleshooting
 
@@ -198,6 +216,10 @@ The button lines show up whenever you press the button.
 | Text is upside down or mirrored | Change `0xA1` to `0xA0` and `0xC8` to `0xC0` in `init_cmds` in [main/oled.c](main/oled.c). |
 | Button press not logged | Check that the button connects its GPIO to **GND** (not 3V3) when pressed. Four-leg tactile buttons are internally joined in pairs, so use two legs on opposite corners. |
 | One press logs several presses | The switch is bouncing for longer than 30 ms. Increase `DEBOUNCE_MS` in [main/button.c](main/button.c). |
+| Screen shows "SD card FAIL" | Check the SD module's 4 signal wires against the table above (CS 23, SCK 21, MOSI 19, MISO 18), and its power and GND. Then press the board's EN (reset) button to try again. |
+| Screen shows "No files found" | The card mounted but its root folder is empty, or only has hidden or system files. Copy some files onto it and reset. |
+| A tap opens the item, or a hold only moves down | A hold only counts once it reaches 3 seconds. Hold until the details screen appears. To change the time, edit `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h). |
+| More than 64 items on the card | Only the first 64 are listed. Raise `MAX_SD_ENTRIES` in [main/main.c](main/main.c) if you need more. |
 
 ## Project structure
 
@@ -208,7 +230,9 @@ The button lines show up whenever you press the button.
 ├── sdkconfig             # Generated project configuration
 └── main/
     ├── CMakeLists.txt    # Component registration
-    ├── main.c            # Application entry point, pin definitions, OLED test
+    ├── main.c            # Pin definitions, startup check, routes button events to the browser
+    ├── browser.c         # File list and details screens, tap/hold navigation
+    ├── browser.h         # browser_init() and browser_handle_button()
     ├── button.c          # Button input (interrupt + debounce, short and long press events)
     ├── button.h          # button_add(), event types and the long press time
     ├── oled.c            # SSD1306/SH1106 I2C OLED driver with a 5x7 text font
