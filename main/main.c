@@ -39,27 +39,38 @@ static void show_oled_idle(void) {
     oled_flush();
 }
 
-// Runs on the button task each time the OLED button changes state
-static void on_oled_button(int gpio, bool pressed) {
+// Runs on the button task for each OLED button event
+static void on_oled_button(int gpio, button_event_t event) {
     static uint32_t presses = 0;
 
     if (!oled_ready) {
         return;
     }
-    if (!pressed) {
-        show_oled_idle();
-        return;
-    }
 
-    presses++;
     char line[22];
-    snprintf(line, sizeof(line), "Presses: %lu", presses);
-
-    oled_clear();
-    oled_draw_string(0, 0, "Button pressed!");
-    oled_draw_string(0, 2, "Hello from ESP32");
-    oled_draw_string(0, 4, line);
-    oled_flush();
+    switch (event) {
+    case BUTTON_EVENT_PRESSED:
+        presses++;
+        snprintf(line, sizeof(line), "Presses: %lu", presses);
+        oled_clear();
+        oled_draw_string(0, 0, "Button pressed!");
+        oled_draw_string(0, 2, "Hello from ESP32");
+        oled_draw_string(0, 4, line);
+        oled_draw_string(0, 6, "Hold 3s for long");
+        oled_flush();
+        break;
+    case BUTTON_EVENT_LONG_PRESS:
+        oled_clear();
+        oled_draw_string(0, 0, "Long press!");
+        oled_draw_string(0, 2, "Let go to reset");
+        oled_flush();
+        break;
+    case BUTTON_EVENT_RELEASED:
+        show_oled_idle();
+        break;
+    default:
+        break;
+    }
 }
 
 void app_main(void) {

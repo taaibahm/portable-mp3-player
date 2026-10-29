@@ -23,6 +23,7 @@ The button input code is in [main/button.c](main/button.c). `app_main` registers
 1. Configures the pin as an input with the internal pull-up enabled
 2. Fires an interrupt whenever the pin changes, in either direction
 3. Waits 30 ms for the switch to stop bouncing, then logs **Button pressed** with a running count, or **Button released** with how long the button was held
+4. Reports events to a callback: `PRESSED` and `RELEASED` for every change, `SHORT_PRESS` when the button is let go before 3 seconds, and `LONG_PRESS` as soon as it has been held for 3 seconds (while still held). The 3 second threshold is `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h).
 
 The button is handled in its own FreeRTOS task, so it keeps working after the SD test finishes, even if the SD card fails to mount.
 
@@ -30,7 +31,7 @@ The button is handled in its own FreeRTOS task, so it keeps working after the SD
 
 The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
 
-At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. When you let go, it goes back to the start message.
+At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. After 3 seconds it switches to "Long press!". When you let go, it goes back to the start message.
 
 MP3 decoding and audio output are not implemented yet.
 
@@ -175,6 +176,9 @@ I (...) SD_TEST:  Found file: SONG01.MP3
 I (...) SD_TEST: Card unmounted.
 I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
+I (...) BUTTON: Button pressed (GPIO 25, count 2)
+I (...) BUTTON: Button long press (GPIO 25)
+I (...) BUTTON: Button released (GPIO 25, held 3412 ms)
 ```
 
 The button lines show up whenever you press the button.
@@ -203,8 +207,8 @@ The button lines show up whenever you press the button.
 └── main/
     ├── CMakeLists.txt    # Component registration
     ├── main.c            # Application entry point, pin definitions, SD card and OLED tests
-    ├── button.c          # Button input (interrupt + debounce, logs presses, optional callback)
-    ├── button.h          # button_add() and the callback type
+    ├── button.c          # Button input (interrupt + debounce, short and long press events)
+    ├── button.h          # button_add(), event types and the long press time
     ├── oled.c            # SSD1306/SH1106 I2C OLED driver with a 5x7 text font
     └── oled.h            # OLED init, clear, draw text and flush functions
 ```

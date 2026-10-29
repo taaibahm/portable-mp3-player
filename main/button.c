@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include "button.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,6 +16,7 @@ typedef struct {
     int last_level;
     uint32_t press_count;
     TickType_t pressed_at;
+    bool long_press_sent;
     button_callback_t cb;
 } button_t;
 
@@ -27,40 +29,88 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
     xQueueSendFromISR(button_queue, &index, NULL);
 }
 
+static void notify(button_t *b, button_event_t event) {
+    if (b->cb) {
+        b->cb(b->gpio, event);
+    }
+}
+
+static bool is_waiting_for_long_press(const button_t *b) {
+    return b->last_level == 0 && !b->long_press_sent;
+}
+
+static void handle_level_change(button_t *b, int level) {
+    b->last_level = level;
+
+    // Active low: pressed pulls the pin to GND
+    if (level == 0) {
+        b->press_count++;
+        b->pressed_at = xTaskGetTickCount();
+        b->long_press_sent = false;
+        ESP_LOGI(TAG, "Button pressed (GPIO %d, count %lu)", b->gpio, b->press_count);
+        notify(b, BUTTON_EVENT_PRESSED);
+    } else {
+        uint32_t held_ms = pdTICKS_TO_MS(xTaskGetTickCount() - b->pressed_at);
+        ESP_LOGI(TAG, "Button released (GPIO %d, held %lu ms)", b->gpio, held_ms);
+        notify(b, BUTTON_EVENT_RELEASED);
+        if (!b->long_press_sent) {
+            notify(b, BUTTON_EVENT_SHORT_PRESS);
+        }
+    }
+}
+
+// How long the task can sleep before some held button reaches the long press time
+static TickType_t ticks_until_next_long_press(void) {
+    TickType_t now = xTaskGetTickCount();
+    TickType_t long_press_ticks = pdMS_TO_TICKS(BUTTON_LONG_PRESS_MS);
+    TickType_t wait = portMAX_DELAY;
+
+    for (int i = 0; i < button_count; i++) {
+        if (!is_waiting_for_long_press(&buttons[i])) {
+            continue;
+        }
+        TickType_t held = now - buttons[i].pressed_at;
+        TickType_t left = held >= long_press_ticks ? 0 : long_press_ticks - held;
+        if (left < wait) {
+            wait = left;
+        }
+    }
+    return wait;
+}
+
+static void send_due_long_presses(void) {
+    TickType_t now = xTaskGetTickCount();
+    TickType_t long_press_ticks = pdMS_TO_TICKS(BUTTON_LONG_PRESS_MS);
+
+    for (int i = 0; i < button_count; i++) {
+        button_t *b = &buttons[i];
+        if (is_waiting_for_long_press(b) && now - b->pressed_at >= long_press_ticks) {
+            b->long_press_sent = true;
+            ESP_LOGI(TAG, "Button long press (GPIO %d)", b->gpio);
+            notify(b, BUTTON_EVENT_LONG_PRESS);
+        }
+    }
+}
+
 static void button_task(void *arg) {
     uint32_t index;
 
     while (1) {
-        if (xQueueReceive(button_queue, &index, portMAX_DELAY)) {
+        // Wake on a pin change, or when a held button is due for its long press
+        if (xQueueReceive(button_queue, &index, ticks_until_next_long_press())) {
             // Let the contacts settle, then drop the bounce interrupts that piled up
             vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
             xQueueReset(button_queue);
 
             // Check every button, since the reset may have dropped another button's event
             for (int i = 0; i < button_count; i++) {
-                button_t *b = &buttons[i];
-                int level = gpio_get_level(b->gpio);
-                if (level == b->last_level) {
-                    continue;
-                }
-                b->last_level = level;
-
-                // Active low: pressed pulls the pin to GND
-                bool pressed = level == 0;
-                if (pressed) {
-                    b->press_count++;
-                    b->pressed_at = xTaskGetTickCount();
-                    ESP_LOGI(TAG, "Button pressed (GPIO %d, count %lu)", b->gpio, b->press_count);
-                } else {
-                    uint32_t held_ms = pdTICKS_TO_MS(xTaskGetTickCount() - b->pressed_at);
-                    ESP_LOGI(TAG, "Button released (GPIO %d, held %lu ms)", b->gpio, held_ms);
-                }
-
-                if (b->cb) {
-                    b->cb(b->gpio, pressed);
+                int level = gpio_get_level(buttons[i].gpio);
+                if (level != buttons[i].last_level) {
+                    handle_level_change(&buttons[i], level);
                 }
             }
         }
+        send_due_long_presses();
     }
 }
 
@@ -70,7 +120,7 @@ static esp_err_t button_start(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    // Callbacks run on this task, so leave room for display/log work
+    // Callbacks run on this task, so leave room for display/SD work
     xTaskCreate(button_task, "button_task", 4096, NULL, 10, NULL);
 
     // ESP_ERR_INVALID_STATE means the ISR service is already installed, which is fine
@@ -110,9 +160,12 @@ esp_err_t button_add(int gpio, button_callback_t cb) {
     }
 
     int index = button_count;
+    // Treat a button that's already held at startup as having had its long press,
+    // so it doesn't fire one (or a short press on release) for that first hold
     buttons[index] = (button_t){
         .gpio = gpio,
         .last_level = gpio_get_level(gpio),
+        .long_press_sent = true,
         .cb = cb,
     };
 
