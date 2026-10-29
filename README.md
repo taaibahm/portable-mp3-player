@@ -15,11 +15,12 @@ The firmware runs a connection check at startup, then shows the files on the SD 
 
    OLED     OK
    Button   OK
+   Audio    OK
    SD card  OK
    Items    5
    ```
 
-   The same results are printed to the serial monitor. If the SD card fails, the screen says "Check SD wiring and card, then reset" and stops there.
+   The same results are printed to the serial monitor. "Audio OK" means the ESP32's I2S output is set up. The amp can't report back, so the only way to know it's wired correctly is to play a sound. If the SD card fails, the screen says "Check SD, then reset" and stops there.
 
 2. **File list.** After 2 seconds the screen switches to the list of files and folders in the root of the SD card. Folders come first and end in `/`. The `>` marks the highlighted item, and 6 items fit on the screen at a time.
 
@@ -48,6 +49,7 @@ The firmware runs a connection check at startup, then shows the files on the SD 
 | [main/button.c](main/button.c) | Debounces the button and turns presses into `PRESSED`, `RELEASED`, `SHORT_PRESS` and `LONG_PRESS` events. The hold time is `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h) |
 | [main/sd_card.c](main/sd_card.c) | Mounts the card over SPI at `/sdcard` and lists a folder (folders first, sorted by name, hidden and system entries skipped). The card stays mounted |
 | [main/oled.c](main/oled.c) | Drives the 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows |
+| [main/player.c](main/player.c) | Reads 16-bit PCM WAV files from the SD card and streams them over I2S to the amplifier in a background task. The volume is `PLAYER_VOLUME_PERCENT` |
 
 The button runs in its own FreeRTOS task, so presses are handled independently of the SD card and screen setup. Button events that happen during the startup check are ignored.
 
@@ -58,6 +60,8 @@ The button runs in its own FreeRTOS task, so presses are handled independently o
 - microSD card formatted as FAT32
 - 1.3" 128x64 I2C OLED module, 4 pins. Ours is sold as SSD1306 but is actually an SH1106, which the driver is set up for by default
 - Momentary push button
+- MAX98357A I2S mono class D amplifier breakout (3 W, 4–8 Ω, 2.5–5.5 V)
+- 8 Ω 2 W speaker
 - Breadboard and jumper wires
 
 ### Pin overview
@@ -71,8 +75,11 @@ The button runs in its own FreeRTOS task, so presses are handled independently o
 | GPIO 32   | Left            | OLED SCL                            |
 | GPIO 33   | Left            | OLED SDA                            |
 | GPIO 25   | Left            | Button                              |
+| GPIO 26   | Left            | Amp BCLK                            |
+| GPIO 27   | Left            | Amp LRC                             |
+| GPIO 14   | Left            | Amp DIN                             |
 | 3V3       | Either          | OLED VCC, SD card VCC if it's 3.3 V |
-| 5V / VIN  | Either          | SD card VCC if it's a 5 V module    |
+| 5V / VIN  | Either          | Amp VIN, SD card VCC if it's a 5 V module |
 | GND       | Either          | GND of every module and the button  |
 
 "Left" and "Right" are for a standard ESP32 DevKit held with the USB port at the bottom and the chip facing you. Check the pin labels printed on your board, because layouts vary.
@@ -87,7 +94,11 @@ Every part has to share a ground with the ESP32, or nothing will talk to each ot
 2. Run a jumper from the ESP32 **3V3** pin to the breadboard's **red (+) rail**.
 3. Connect every module's GND to the − rail. One leg of the button also goes to the − rail.
 4. Connect the OLED's VCC to the + rail (3.3 V).
-5. Connect the SD module's VCC to the + rail only if it's a 3.3 V module. A 5 V module goes to the ESP32's **5V** (or **VIN**) pin instead. Never connect 5V to the + rail.
+5. Connect the SD module's VCC to the + rail only if it's a 3.3 V module. A 5 V module (one with an AMS1117 regulator on it) goes to the ESP32's **5V** (or **VIN**) pin instead.
+6. Connect the amp's **VIN** to the ESP32's **5V** (or **VIN**) pin too.
+7. Never connect 5V to the + rail. Run separate wires from the 5V pin to each 5 V part, or use the breadboard's second pair of rails as a 5 V rail.
+
+The 5V pin only has power while the board is on USB.
 
 ### SD card reader wiring
 
@@ -134,12 +145,41 @@ A four-leg tactile button has its legs joined in pairs inside. Put the button ac
 
 If you want to use a different pin, avoid these:
 
-- 18, 19, 21, 23, 25, 32 and 33, which the SD card, OLED and button already use
+- 14, 18, 19, 21, 23, 25, 26, 27, 32 and 33, which the SD card, OLED, button and amp already use
 - 0, 2, 12 and 15, which are strapping pins
 - 6–11, which are connected to the internal flash
 - 34–39, which are input-only and have no internal pull-up
 
-GPIO 4, 5, 13, 14, 22, 26 and 27 are free and safe to use.
+GPIO 4, 5, 13 and 22 are free and safe to use.
+
+### Amplifier and speaker wiring
+
+| Amp pin | Connects to | Notes                                                      |
+|---------|-------------|------------------------------------------------------------|
+| VIN     | 5V / VIN    | 5 V gives the most volume. 3V3 also works, but quieter     |
+| GND     | GND         |                                                            |
+| BCLK    | GPIO 26     | I2S bit clock                                              |
+| LRC     | GPIO 27     | I2S word select (left/right clock), sometimes labelled WS or LRCLK |
+| DIN     | GPIO 14     | I2S audio data                                             |
+| GAIN    | Leave unconnected | Unconnected = 9 dB gain (see below)                  |
+| SD      | Leave unconnected | Unconnected = on, playing left + right mixed to mono |
+| + / −   | Speaker     | Screw terminals or solder pads on the other edge of the board |
+
+The speaker connects only to the amp's **+** and **−** outputs. **Never connect either speaker wire to GND** or to the ESP32. The amp drives both wires (it's a bridge-tied output), so grounding one side can damage it. Your speaker's polarity doesn't matter for a single speaker.
+
+Your 8 Ω 2 W speaker is within the amp's 4–8 Ω range. At 5 V, the amp can put out about 1.8 W into 8 Ω, which is close to the speaker's limit. That's why the firmware plays at 50% volume by default (`PLAYER_VOLUME_PERCENT` in [main/player.c](main/player.c)).
+
+**GAIN pin options** (only if it's too quiet or too loud):
+
+| GAIN connected to | Gain |
+|-------------------|------|
+| Nothing           | 9 dB (default) |
+| GND               | 12 dB |
+| VIN               | 6 dB |
+| 100 kΩ to GND     | 15 dB |
+| 100 kΩ to VIN     | 3 dB |
+
+**Power tip:** the amp draws bursts of current on loud notes. If the ESP32 resets or the screen glitches during loud parts, put a 100–470 µF capacitor across the amp's VIN and GND, or lower the volume.
 
 ### Wiring checklist
 
@@ -149,6 +189,8 @@ Check these before plugging in the USB cable:
 - [ ] SD card: CS → 23, SCK → 21, MOSI → 19, MISO → 18, VCC → 3V3 or 5V (depending on the module), GND → − rail
 - [ ] OLED: VCC → + rail (3V3), GND → − rail, SCL → 32, SDA → 33, matched to the labels printed on the module
 - [ ] Button: GPIO 25 ↔ GND, using diagonal legs
+- [ ] Amp: VIN → 5V, GND → − rail, BCLK → 26, LRC → 27, DIN → 14, GAIN and SD unconnected
+- [ ] Speaker: only to the amp's + and − terminals, with neither wire on GND
 - [ ] Nothing is connected between 5V and the + rail
 
 ## Software setup
@@ -175,6 +217,28 @@ Replace `<PORT>` with your board's serial port (for example `COM3` on Windows (f
 - Format the card as **FAT32**. The firmware does not format the card if mounting fails (`format_if_mount_failed = false`).
 - Long file names are disabled (`CONFIG_FATFS_LFN_NONE`), so files show up as 8.3 names (for example `SONG01.MP3`). Keep file names short, or enable long file names in `idf.py menuconfig` → *Component config* → *FAT Filesystem support*.
 
+### Preparing audio files
+
+The player supports **WAV files with 16-bit PCM samples**, mono or stereo, at 8–48 kHz. MP3 isn't supported yet.
+
+Name each file with up to 8 characters plus `.WAV` (for example `SONG1.WAV`). Longer names still play, but show up shortened on the screen (for example `MYFAVO~1.WAV`).
+
+**Using Audacity (free):**
+
+1. Open your MP3 or other audio file.
+2. Optional: choose **Tracks → Mix → Mix Stereo Down to Mono**. The amp is mono anyway, and mono files are half the size.
+3. Set the **Project Rate** (bottom left) to **44100** or **22050**. 22050 Hz files are half the size and still sound fine on a small speaker.
+4. Choose **File → Export → Export as WAV**, and set Encoding to **Signed 16-bit PCM**.
+5. Copy the file to the root of the SD card.
+
+**Using ffmpeg:**
+
+```sh
+ffmpeg -i "My Song.mp3" -ac 1 -ar 44100 -sample_fmt s16 SONG1.WAV
+```
+
+A 3-minute song is about 16 MB as 44.1 kHz mono, or 8 MB as 22.05 kHz mono. Stereo 44.1 kHz files also work, but they need twice the read speed from the SD card. If those stutter, use mono.
+
 ### Expected output
 
 On success the serial monitor should show something like:
@@ -190,7 +254,8 @@ Size: 14910MB
 ...
 I (...) SD_CARD:  Found folder: MUSIC
 I (...) SD_CARD:  Found file: SONG01.MP3
-I (...) MAIN: Startup check: OLED OK, button OK, SD card OK
+I (...) PLAYER: I2S ready (BCLK GPIO 26, LRC GPIO 27, DIN GPIO 14)
+I (...) MAIN: Startup check: OLED OK, button OK, audio OK, SD card OK
 I (...) MAIN: 2 item(s) on the SD card
 I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
@@ -237,6 +302,8 @@ The `BUTTON` and `BROWSER` lines show up as you tap and hold the button.
     ├── button.h          # button_add(), event types and the long press time
     ├── oled.c            # SSD1306/SH1106 I2C OLED driver with a 5x7 text font
     ├── oled.h            # OLED init, clear, draw text and flush functions
+    ├── player.c          # WAV playback over I2S to the MAX98357A, in a background task
+    ├── player.h          # player_init(), player_play(), player_stop()
     ├── sd_card.c         # SD card mount over SPI and sorted directory listing
     └── sd_card.h         # sd_card_mount(), sd_card_list() and the entry type
 ```
