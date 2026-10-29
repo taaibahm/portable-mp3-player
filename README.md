@@ -4,7 +4,7 @@ A portable MP3 player built on the ESP32 using ESP-IDF. Music files are stored o
 
 ## Current status
 
-The firmware runs a connection check at startup, then shows the files on the SD card as a menu on the OLED that you control with one button. MP3 decoding and audio output are not implemented yet.
+The firmware runs a connection check at startup, then shows the files on the SD card as a menu on the OLED that you control with one button. WAV files play through the amplifier and speaker. MP3 decoding is not implemented yet.
 
 ### Using it
 
@@ -28,30 +28,45 @@ The firmware runs a connection check at startup, then shows the files on the SD 
    SD card: 5 items
    >MUSIC/
     PODCASTS/
-    SONG01.MP3
-    SONG02.MP3
     NOTES.TXT
+    SONG1.WAV
+    SONG2.MP3
    Tap:next Hold:open
    ```
 
 3. **Tap** the button to move the highlight down one item. It wraps back to the top after the last item, and the list scrolls when you go past the bottom of the screen.
 
-4. **Hold** the button for 3 seconds to open the highlighted item. As soon as you press, the bottom line changes to "Hold 3s to open..." so you know the hold is counting. The details screen shows the name, the size and whether it's an MP3 file or a folder.
+4. **Hold** the button for 3 seconds to open the highlighted item. As soon as you press, the bottom line changes to "Hold 3s to open..." so you know the hold is counting.
+   - **WAV file:** it starts playing, and the screen shows the elapsed and total time, updated every second:
 
-5. **Tap** again on the details screen to go back to the list.
+     ```
+     Now playing:
+
+     SONG1.WAV
+     44100 Hz mono
+
+     0:42 / 3:15
+
+     Tap to stop
+     ```
+
+     When the song ends, the screen goes back to the list.
+   - **Anything else:** the details screen shows the name, the size and the type. MP3 files say "MP3 not supported yet". If a WAV file is in a format the player can't handle, it says "Can't play this WAV" (see [Preparing audio files](#preparing-audio-files)).
+
+5. **Tap** on the playing or details screen to stop playback and go back to the list.
 
 ### How it fits together
 
 | File | Job |
 |------|-----|
 | [main/main.c](main/main.c) | Pin definitions, the startup check, and passing button events to the browser |
-| [main/browser.c](main/browser.c) | The file list and details screens, and what tap and hold do on each screen |
+| [main/browser.c](main/browser.c) | The file list, details and now-playing screens, and what tap and hold do on each. Runs in its own task and is the only code that draws on the screen after startup |
 | [main/button.c](main/button.c) | Debounces the button and turns presses into `PRESSED`, `RELEASED`, `SHORT_PRESS` and `LONG_PRESS` events. The hold time is `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h) |
 | [main/sd_card.c](main/sd_card.c) | Mounts the card over SPI at `/sdcard` and lists a folder (folders first, sorted by name, hidden and system entries skipped). The card stays mounted |
 | [main/oled.c](main/oled.c) | Drives the 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows |
 | [main/player.c](main/player.c) | Reads 16-bit PCM WAV files from the SD card and streams them over I2S to the amplifier in a background task. The volume is `PLAYER_VOLUME_PERCENT` |
 
-The button runs in its own FreeRTOS task, so presses are handled independently of the SD card and screen setup. Button events that happen during the startup check are ignored.
+Each part runs in its own FreeRTOS task. The button task debounces presses and passes events on. The browser task handles button events and "song finished" messages one at a time and draws the screen. The player task streams audio. Button events that happen during the startup check are ignored.
 
 ## Hardware
 
@@ -246,6 +261,7 @@ On success the serial monitor should show something like:
 ```
 I (...) OLED: Display found at 0x3C
 I (...) BUTTON: Button ready on GPIO 25
+I (...) PLAYER: I2S ready (BCLK GPIO 26, LRC GPIO 27, DIN GPIO 14)
 I (...) SD_CARD: Filesystem mounted successfully!
 Name: SD16G
 Type: SDHC/SDXC
@@ -253,20 +269,21 @@ Speed: 4.00 MHz (limit: 4.00 MHz)
 Size: 14910MB
 ...
 I (...) SD_CARD:  Found folder: MUSIC
-I (...) SD_CARD:  Found file: SONG01.MP3
-I (...) PLAYER: I2S ready (BCLK GPIO 26, LRC GPIO 27, DIN GPIO 14)
+I (...) SD_CARD:  Found file: SONG1.WAV
 I (...) MAIN: Startup check: OLED OK, button OK, audio OK, SD card OK
 I (...) MAIN: 2 item(s) on the SD card
 I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
-I (...) BROWSER: Highlighted SONG01.MP3
+I (...) BROWSER: Highlighted SONG1.WAV
 I (...) BUTTON: Button pressed (GPIO 25, count 2)
 I (...) BUTTON: Button long press (GPIO 25)
-I (...) BROWSER: Selected SONG01.MP3
+I (...) BROWSER: Selected SONG1.WAV
+I (...) PLAYER: Playing /sdcard/SONG1.WAV (44100 Hz, mono, 195 s)
 I (...) BUTTON: Button released (GPIO 25, held 3412 ms)
+I (...) PLAYER: Playback finished
 ```
 
-The `BUTTON` and `BROWSER` lines show up as you tap and hold the button.
+The `BUTTON`, `BROWSER` and `PLAYER` lines show up as you tap and hold the button.
 
 ## Troubleshooting
 
@@ -285,6 +302,11 @@ The `BUTTON` and `BROWSER` lines show up as you tap and hold the button.
 | Screen shows "No files found" | The card mounted but its root folder is empty, or only has hidden or system files. Copy some files onto it and reset. |
 | A tap opens the item, or a hold only moves down | A hold only counts once it reaches 3 seconds. Hold until the details screen appears. To change the time, edit `BUTTON_LONG_PRESS_MS` in [main/button.h](main/button.h). |
 | More than 64 items on the card | Only the first 64 are listed. Raise `MAX_SD_ENTRIES` in [main/main.c](main/main.c) if you need more. |
+| Song plays but no sound | Check the amp's VIN (5V) and GND, and that BCLK, LRC and DIN aren't swapped (26, 27, 14). Make sure the speaker is on the amp's + and − terminals. Check the amp's SD pin isn't connected to GND, because that turns the amp off. |
+| "Can't play this WAV" | The file isn't 16-bit PCM, or its sample rate is outside 8–48 kHz. The serial monitor says exactly what format it found. Re-export it as described in [Preparing audio files](#preparing-audio-files). |
+| Audio stutters or skips | The SD card can't keep up. Use mono and/or 22050 Hz files, and keep the SD jumper wires short. |
+| Loud crackling or distortion | Lower `PLAYER_VOLUME_PERCENT` in [main/player.c](main/player.c), or connect GAIN to VIN for less gain. |
+| ESP32 resets on loud parts | The amp is pulling the 5 V supply down. Add a 100–470 µF capacitor across the amp's VIN and GND, use a better USB cable or port, or lower the volume. |
 
 ## Project structure
 
@@ -296,7 +318,7 @@ The `BUTTON` and `BROWSER` lines show up as you tap and hold the button.
 └── main/
     ├── CMakeLists.txt    # Component registration
     ├── main.c            # Pin definitions, startup check, routes button events to the browser
-    ├── browser.c         # File list and details screens, tap/hold navigation
+    ├── browser.c         # File list, details and now-playing screens, in its own task
     ├── browser.h         # browser_init() and browser_handle_button()
     ├── button.c          # Button input (interrupt + debounce, short and long press events)
     ├── button.h          # button_add(), event types and the long press time

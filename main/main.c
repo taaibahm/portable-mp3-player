@@ -60,7 +60,8 @@ void app_main(void) {
     draw_check_row(3, "Button", button_ok ? "OK" : "FAIL");
 
     // The amp has no way to report back, so this only checks the I2S setup
-    bool audio_ok = player_init(PIN_NUM_AMP_BCLK, PIN_NUM_AMP_LRC, PIN_NUM_AMP_DIN, NULL) == ESP_OK;
+    bool audio_ok = player_init(PIN_NUM_AMP_BCLK, PIN_NUM_AMP_LRC, PIN_NUM_AMP_DIN,
+                                browser_on_playback_done) == ESP_OK;
     draw_check_row(4, "Audio", audio_ok ? "OK" : "FAIL");
 
     draw_check_row(5, "SD card", "...");
