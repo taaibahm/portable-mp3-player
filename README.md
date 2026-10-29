@@ -4,7 +4,7 @@ A portable MP3 player built on the ESP32 using ESP-IDF. Music files are stored o
 
 ## Current status
 
-The project is in its early stages. The firmware currently runs three hardware tests at the same time, and all of them print to the ESP-IDF serial monitor. The tests don't depend on each other: the buttons and screen work without an SD card, and the SD test works without the screen.
+The project is in its early stages. The firmware currently runs three hardware tests at the same time, and all of them print to the ESP-IDF serial monitor. The tests don't depend on each other: the button and screen work without an SD card, and the SD test works without the screen.
 
 ### SD card test
 
@@ -18,21 +18,19 @@ The SD card bring-up test is in [main/main.c](main/main.c). It:
 
 ### Button test
 
-The button input code is in [main/button.c](main/button.c). `app_main` registers two buttons, on GPIO 25 and GPIO 13, before the SD test starts. For each button, the code:
+The button input code is in [main/button.c](main/button.c). `app_main` registers the button on GPIO 25 before the SD test starts. The code:
 
 1. Configures the pin as an input with the internal pull-up enabled
 2. Fires an interrupt whenever the pin changes, in either direction
 3. Waits 30 ms for the switch to stop bouncing, then logs **Button pressed** with a running count, or **Button released** with how long the button was held
 
-The buttons are handled in their own FreeRTOS task, so they keep working after the SD test finishes, even if the SD card fails to mount.
+The button is handled in its own FreeRTOS task, so it keeps working after the SD test finishes, even if the SD card fails to mount.
 
 ### OLED display test
 
 The display driver is in [main/oled.c](main/oled.c). It talks to a 128x64 I2C OLED and draws text with a built-in 5x7 font: 21 characters per row, 8 rows.
 
 At startup the screen shows "Press the button on GPIO 25". While the GPIO 25 button is held down, the screen shows "Button pressed!" and a press count. When you let go, it goes back to the start message.
-
-The GPIO 13 button is optional. It only logs to the serial monitor.
 
 MP3 decoding and audio output are not implemented yet.
 
@@ -42,7 +40,7 @@ MP3 decoding and audio output are not implemented yet.
 - SPI microSD card reader module
 - microSD card formatted as FAT32
 - 1.3" 128x64 I2C OLED module, 4 pins. Ours is sold as SSD1306 but is actually an SH1106, which the driver is set up for by default
-- 1 or 2 momentary push buttons
+- Momentary push button
 - Breadboard and jumper wires
 
 ### Pin overview
@@ -55,11 +53,10 @@ MP3 decoding and audio output are not implemented yet.
 | GPIO 23   | Right           | SD card MOSI                        |
 | GPIO 32   | Left            | OLED SCL                            |
 | GPIO 33   | Left            | OLED SDA                            |
-| GPIO 25   | Left            | Button 1 (OLED test)                |
-| GPIO 13   | Left            | Button 2 (log only, optional)       |
+| GPIO 25   | Left            | Button                              |
 | 3V3       | Either          | OLED VCC, SD card VCC if it's 3.3 V |
 | 5V / VIN  | Either          | SD card VCC if it's a 5 V module    |
-| GND       | Either          | GND of every module and button      |
+| GND       | Either          | GND of every module and the button  |
 
 "Left" and "Right" are for a standard ESP32 DevKit held with the USB port at the bottom and the chip facing you. Check the pin labels printed on your board, because layouts vary.
 
@@ -71,7 +68,7 @@ Every part has to share a ground with the ESP32, or nothing will talk to each ot
 
 1. Run a jumper from an ESP32 **GND** pin to the breadboard's **blue (−) rail**.
 2. Run a jumper from the ESP32 **3V3** pin to the breadboard's **red (+) rail**.
-3. Connect every module's GND to the − rail. One leg of each button also goes to the − rail.
+3. Connect every module's GND to the − rail. One leg of the button also goes to the − rail.
 4. Connect the OLED's VCC to the + rail (3.3 V).
 5. Connect the SD module's VCC to the + rail only if it's a 3.3 V module. A 5 V module goes to the ESP32's **5V** (or **VIN**) pin instead. Never connect 5V to the + rail.
 
@@ -109,23 +106,23 @@ The firmware checks I2C addresses `0x3C` and `0x3D` and uses whichever one answe
 
 ### Button wiring
 
-| Button     | Leg 1   | Leg 2 | Purpose                                         |
-|------------|---------|-------|-------------------------------------------------|
-| Button 1   | GPIO 25 | GND   | Shows text on the OLED and logs presses         |
-| Button 2   | GPIO 13 | GND   | Logs presses to the serial monitor (optional)   |
+| Button leg | ESP32 pin | Notes                                   |
+|------------|-----------|-----------------------------------------|
+| Leg 1      | GPIO 25   | Internal pull-up enabled, active low    |
+| Leg 2      | GND       |                                         |
 
-No resistors are needed, because the internal pull-ups are enabled and a pressed button reads as low. Don't connect a button to 3V3.
+No resistor is needed, because the internal pull-up is enabled and a pressed button reads as low. Don't connect the button to 3V3.
 
 A four-leg tactile button has its legs joined in pairs inside. Put the button across the breadboard's center gap and use **two diagonally opposite legs**, so the button actually opens and closes the circuit.
 
-If you want to use different pins, avoid these:
+If you want to use a different pin, avoid these:
 
-- 5, 13, 18, 19, 23, 25, 32 and 33, which the SD card, OLED and buttons already use
+- 5, 18, 19, 23, 25, 32 and 33, which the SD card, OLED and button already use
 - 0, 2, 12 and 15, which are strapping pins
 - 6–11, which are connected to the internal flash
 - 34–39, which are input-only and have no internal pull-up
 
-GPIO 4, 14, 21, 22, 26 and 27 are free and safe to use.
+GPIO 4, 13, 14, 21, 22, 26 and 27 are free and safe to use.
 
 ### Wiring checklist
 
@@ -134,8 +131,7 @@ Check these before plugging in the USB cable:
 - [ ] ESP32 GND → breadboard − rail, ESP32 3V3 → breadboard + rail
 - [ ] SD card: CS → 5, SCK → 18, MOSI → 23, MISO → 19, VCC → 3V3 or 5V (depending on the module), GND → − rail
 - [ ] OLED: VCC → + rail (3V3), GND → − rail, SCL → 32, SDA → 33, matched to the labels printed on the module
-- [ ] Button 1: GPIO 25 ↔ GND, using diagonal legs
-- [ ] Button 2 (optional): GPIO 13 ↔ GND, using diagonal legs
+- [ ] Button: GPIO 25 ↔ GND, using diagonal legs
 - [ ] Nothing is connected between 5V and the + rail
 
 ## Software setup
@@ -169,7 +165,6 @@ On success the serial monitor should show something like:
 ```
 I (...) OLED: Display found at 0x3C
 I (...) BUTTON: Button ready on GPIO 25
-I (...) BUTTON: Button ready on GPIO 13
 I (...) SD_TEST: Filesystem mounted successfully!
 Name: SD16G
 Type: SDHC/SDXC
@@ -182,7 +177,7 @@ I (...) BUTTON: Button pressed (GPIO 25, count 1)
 I (...) BUTTON: Button released (GPIO 25, held 184 ms)
 ```
 
-The button lines show up whenever you press a button.
+The button lines show up whenever you press the button.
 
 ## Troubleshooting
 
@@ -196,7 +191,6 @@ The button lines show up whenever you press a button.
 | Left edge of the text is cut off, and there's a strip of noise on the right | The driver's column offset doesn't match your display's chip. The default `OLED_COL_OFFSET` of `2` in [main/oled.c](main/oled.c) is for SH1106 displays (most 1.3" modules). For a true SSD1306 (most 0.96" modules), set it to `0`. |
 | Text is upside down or mirrored | Change `0xA1` to `0xA0` and `0xC8` to `0xC0` in `init_cmds` in [main/oled.c](main/oled.c). |
 | Button press not logged | Check that the button connects its GPIO to **GND** (not 3V3) when pressed. Four-leg tactile buttons are internally joined in pairs, so use two legs on opposite corners. |
-| Press is logged but the screen doesn't change | Only the button on `PIN_NUM_OLED_BUTTON` (GPIO 25) updates the screen. Check which GPIO the log line shows. |
 | One press logs several presses | The switch is bouncing for longer than 30 ms. Increase `DEBOUNCE_MS` in [main/button.c](main/button.c). |
 
 ## Project structure
